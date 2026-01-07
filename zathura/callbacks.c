@@ -29,7 +29,8 @@ gboolean cb_destroy(GtkWidget* UNUSED(widget), zathura_t* zathura) {
     document_close(zathura, false);
   }
 
-  gtk_main_quit();
+  /* With GtkApplication, we don't call gtk_main_quit().
+   * The application will quit automatically when all windows are closed. */
   return TRUE;
 }
 
