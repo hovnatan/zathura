@@ -319,6 +319,7 @@ static bool init_ui(zathura_t* zathura) {
   girara_statusbar_item_set_text(zathura->ui.session, zathura->ui.statusbar.file, _("[No name]"));
 
   /* signals */
+  g_signal_connect(G_OBJECT(zathura->ui.session->gtk.window), "delete-event", G_CALLBACK(cb_window_delete_event), NULL);
   g_signal_connect(G_OBJECT(zathura->ui.session->gtk.window), "destroy", G_CALLBACK(cb_destroy), zathura);
 
   return true;

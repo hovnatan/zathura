@@ -34,6 +34,38 @@ gboolean cb_destroy(GtkWidget* UNUSED(widget), zathura_t* zathura) {
   return TRUE;
 }
 
+/* Handler for window-state-event to destroy after unfullscreen completes (X button) */
+static gboolean on_window_state_for_delete(GtkWidget* widget, GdkEventWindowState* event, gpointer data) {
+  (void)data;
+  /* Check if we've left fullscreen state */
+  if ((event->changed_mask & GDK_WINDOW_STATE_FULLSCREEN) &&
+      !(event->new_window_state & GDK_WINDOW_STATE_FULLSCREEN)) {
+    /* Disconnect this handler */
+    g_signal_handlers_disconnect_by_func(widget, on_window_state_for_delete, NULL);
+    gtk_widget_destroy(widget);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+gboolean cb_window_delete_event(GtkWidget* widget, GdkEvent* UNUSED(event), gpointer UNUSED(data)) {
+  /* Check if window is fullscreen */
+  GdkWindow* gdk_window = gtk_widget_get_window(widget);
+  if (gdk_window != NULL) {
+    GdkWindowState state = gdk_window_get_state(gdk_window);
+    if (state & GDK_WINDOW_STATE_FULLSCREEN) {
+      /* Exit fullscreen and destroy after transition completes */
+      g_signal_connect(widget, "window-state-event",
+                       G_CALLBACK(on_window_state_for_delete), NULL);
+      gtk_window_unfullscreen(GTK_WINDOW(widget));
+      return TRUE;  /* Prevent immediate destruction */
+    }
+  }
+
+  /* Allow normal destruction to proceed */
+  return FALSE;
+}
+
 void cb_buffer_changed(girara_session_t* session) {
   g_return_if_fail(session != NULL);
   g_return_if_fail(session->global.data != NULL);

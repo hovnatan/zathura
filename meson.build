@@ -1,4 +1,4 @@
-project('zathura', 'c',
+project('zathura', 'c', 'objc',
   version: '0.5.14',
   meson_version: '>=1.5',
   default_options: ['c_std=c17', 'warning_level=3'],
@@ -205,10 +205,19 @@ if seccomp.found() or landlock or target_machine.system() == 'openbsd'
 endif
 
 # zathura executable
+zathura_main_sources = files('zathura/main.c')
+zathura_extra_deps = []
+
+# Add macOS-specific Objective-C file for window tabbing control
+if host_machine.system() == 'darwin' and gtk_mac_integration.found()
+  zathura_main_sources += files('zathura/osx-utils.m')
+  zathura_extra_deps += dependency('appleframeworks', modules: ['AppKit'])
+endif
+
 zathura = executable(
   'zathura',
-  files('zathura/main.c'),
-  dependencies: build_dependencies + [libzathura_dep],
+  zathura_main_sources,
+  dependencies: build_dependencies + [libzathura_dep] + zathura_extra_deps,
   install: true,
   include_directories: include_directories,
   c_args: defines + flags,

@@ -2,6 +2,7 @@
 
 #ifdef GTKOSXAPPLICATION
 #include <gtkosxapplication.h>
+#include "osx-utils.h"
 #endif
 
 #include <girara/settings.h>
@@ -47,11 +48,15 @@ typedef struct {
   gint page_number;
   Window embed;
   char** argv;
+  gboolean files_opened;  /* Flag to track if files were opened at startup */
 } ZathuraAppData;
 
 static ZathuraAppData* app_data = NULL;
 static int ipc_socket_fd = -1;
 static GIOChannel* ipc_channel = NULL;
+#ifdef GTKOSXAPPLICATION
+static GtkAccelGroup* menu_accel_group = NULL;
+#endif
 
 /* Forward declaration */
 static zathura_t* create_zathura_window(const char* filepath);
@@ -239,6 +244,14 @@ static zathura_t* create_zathura_window(const char* filepath) {
   /* Register window with GtkApplication so it knows to keep running */
   if (app_data->app != NULL && zathura->ui.session != NULL && zathura->ui.session->gtk.window != NULL) {
     gtk_application_add_window(app_data->app, GTK_WINDOW(zathura->ui.session->gtk.window));
+#ifdef GTKOSXAPPLICATION
+    /* Disable tabbing for this window */
+    osx_disable_window_tabbing(zathura->ui.session->gtk.window);
+    /* Add menu accelerator group to window for Cmd+N shortcut */
+    if (menu_accel_group != NULL) {
+      gtk_window_add_accel_group(GTK_WINDOW(zathura->ui.session->gtk.window), menu_accel_group);
+    }
+#endif
   }
 
   if (app_data->synctex_editor != NULL) {
@@ -261,13 +274,69 @@ static zathura_t* create_zathura_window(const char* filepath) {
 #ifdef GTKOSXAPPLICATION
 static GtkosxApplication* osx_app = NULL;
 
-/* Called on application startup to set up macOS menu */
-static void on_startup(GtkApplication* app, gpointer user_data) {
+/* Track zathura instances for reusing empty windows */
+static GList* zathura_instances = NULL;
+
+/* Handle macOS file open events (from Finder, open command, etc.) */
+static gboolean on_osx_open_file(GtkosxApplication* app, gchar* path, gpointer user_data) {
   (void)app;
   (void)user_data;
 
+  girara_debug("macOS open file request: %s", path ? path : "(null)");
+
+  if (path != NULL && strlen(path) > 0) {
+    /* Check if there's an empty window we can reuse */
+    for (GList* l = zathura_instances; l != NULL; l = l->next) {
+      zathura_t* z = (zathura_t*)l->data;
+      if (z != NULL && !zathura_has_document(z)) {
+        girara_debug("Reusing empty window for file");
+        /* Open document in existing empty window */
+        document_open_idle(z, path, NULL, 0, NULL, NULL, NULL, NULL);
+        return TRUE;
+      }
+    }
+
+    /* No empty window, create a new one */
+    girara_debug("Creating new window for file");
+    zathura_t* zathura = create_zathura_window(path);
+    if (zathura != NULL) {
+      zathura_instances = g_list_append(zathura_instances, zathura);
+      return TRUE;  /* File handled successfully */
+    }
+  }
+  return FALSE;  /* File not handled */
+}
+
+/* Action callback for new window */
+static void on_new_window_action(GSimpleAction* action, GVariant* parameter, gpointer user_data) {
+  (void)action;
+  (void)parameter;
+  (void)user_data;
+  g_application_activate(G_APPLICATION(app_data->app));
+}
+
+/* Called on application startup to set up macOS menu */
+static void on_startup(GtkApplication* app, gpointer user_data) {
+  (void)user_data;
+
+  /* Disable macOS automatic window tabbing (prevents tabs showing in fullscreen) */
+  osx_disable_automatic_tabbing();
+
   osx_app = g_object_new(GTKOSX_TYPE_APPLICATION, NULL);
-  gtkosx_application_set_use_quartz_accelerators(osx_app, FALSE);
+  gtkosx_application_set_use_quartz_accelerators(osx_app, TRUE);
+
+  /* Connect to macOS-specific file open signal */
+  g_signal_connect(osx_app, "NSApplicationOpenFile",
+                   G_CALLBACK(on_osx_open_file), NULL);
+
+  /* Create action for new window */
+  GSimpleAction* new_window_action = g_simple_action_new("new-window", NULL);
+  g_signal_connect(new_window_action, "activate", G_CALLBACK(on_new_window_action), NULL);
+  g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(new_window_action));
+
+  /* Set Cmd+N accelerator for the action */
+  const gchar* new_window_accels[] = { "<Primary>n", NULL };
+  gtk_application_set_accels_for_action(app, "app.new-window", new_window_accels);
 
   /* Create macOS menu bar */
   GtkWidget* menubar = gtk_menu_bar_new();
@@ -278,11 +347,10 @@ static void on_startup(GtkApplication* app, gpointer user_data) {
   gtk_menu_item_set_submenu(GTK_MENU_ITEM(file_item), file_menu);
   gtk_menu_shell_append(GTK_MENU_SHELL(menubar), file_item);
 
-  /* New Window item */
-  GtkWidget* new_window_item = gtk_menu_item_new_with_label("New Window");
+  /* New Window item with Cmd+N label */
+  GtkWidget* new_window_item = gtk_menu_item_new_with_label("New Window		⌘N");
+  g_signal_connect(new_window_item, "activate", G_CALLBACK(on_new_window_action), NULL);
   gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), new_window_item);
-  g_signal_connect_swapped(new_window_item, "activate",
-                           G_CALLBACK(g_application_activate), app_data->app);
 
   gtk_widget_show_all(menubar);
   gtkosx_application_set_menu_bar(osx_app, GTK_MENU_SHELL(menubar));
@@ -300,11 +368,21 @@ static void on_activate(GtkApplication* app, gpointer user_data) {
   (void)app;
   (void)user_data;
 
+  /* Don't create a blank window if we already opened files at startup */
+  if (app_data != NULL && app_data->files_opened) {
+    return;
+  }
+
   /* Create a new empty window */
   zathura_t* zathura = create_zathura_window(NULL);
   if (zathura == NULL) {
     girara_error("Could not create zathura window.");
   }
+#ifdef GTKOSXAPPLICATION
+  else {
+    zathura_instances = g_list_append(zathura_instances, zathura);
+  }
+#endif
 }
 
 /* Called when files are opened */
@@ -319,6 +397,14 @@ static void on_open(GtkApplication* app, GFile** files, gint n_files, const gcha
       zathura_t* zathura = create_zathura_window(filepath);
       if (zathura == NULL) {
         girara_error("Could not create zathura window for '%s'.", filepath);
+      } else {
+        /* Mark that we successfully opened files */
+        if (app_data != NULL) {
+          app_data->files_opened = TRUE;
+        }
+#ifdef GTKOSXAPPLICATION
+        zathura_instances = g_list_append(zathura_instances, zathura);
+#endif
       }
     }
   }

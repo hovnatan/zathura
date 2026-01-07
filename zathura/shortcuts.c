@@ -1430,6 +1430,20 @@ bool sc_toggle_presentation(girara_session_t* session, girara_argument_t* UNUSED
   return false;
 }
 
+/* Handler for window-state-event to destroy after unfullscreen completes */
+static gboolean on_window_state_for_quit(GtkWidget* widget, GdkEventWindowState* event, gpointer data) {
+  (void)data;
+  /* Check if we've left fullscreen state */
+  if ((event->changed_mask & GDK_WINDOW_STATE_FULLSCREEN) &&
+      !(event->new_window_state & GDK_WINDOW_STATE_FULLSCREEN)) {
+    /* Disconnect this handler */
+    g_signal_handlers_disconnect_by_func(widget, on_window_state_for_quit, NULL);
+    gtk_widget_destroy(widget);
+    return TRUE;
+  }
+  return FALSE;
+}
+
 bool sc_quit(girara_session_t* session, girara_argument_t* UNUSED(argument), girara_event_t* UNUSED(event),
              unsigned int UNUSED(t)) {
   g_return_val_if_fail(session != NULL, false);
@@ -1445,7 +1459,23 @@ bool sc_quit(girara_session_t* session, girara_argument_t* UNUSED(argument), gir
 
   /* Destroy the window - GtkApplication will quit when all windows are closed */
   if (session->gtk.window != NULL) {
-    gtk_widget_destroy(GTK_WIDGET(session->gtk.window));
+    GtkWidget* window = GTK_WIDGET(session->gtk.window);
+
+    /* Check if window is fullscreen */
+    GdkWindow* gdk_window = gtk_widget_get_window(window);
+    if (gdk_window != NULL) {
+      GdkWindowState state = gdk_window_get_state(gdk_window);
+      if (state & GDK_WINDOW_STATE_FULLSCREEN) {
+        /* Connect handler to destroy after unfullscreen completes */
+        g_signal_connect(window, "window-state-event",
+                         G_CALLBACK(on_window_state_for_quit), NULL);
+        gtk_window_unfullscreen(GTK_WINDOW(window));
+        return false;
+      }
+    }
+
+    /* Not fullscreen, destroy immediately */
+    gtk_widget_destroy(window);
   }
 
   return false;

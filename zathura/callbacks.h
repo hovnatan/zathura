@@ -21,6 +21,18 @@
 gboolean cb_destroy(GtkWidget* widget, zathura_t* zathura);
 
 /**
+ * Handles the delete-event signal before window destruction.
+ * Exits fullscreen mode before allowing window to be destroyed to avoid
+ * GTK/Quartz crash on macOS.
+ *
+ * @param widget The gtk window of zathura
+ * @param event The delete event
+ * @param data User data (unused)
+ * @return FALSE to allow window destruction to proceed
+ */
+gboolean cb_window_delete_event(GtkWidget* widget, GdkEvent* event, gpointer data);
+
+/**
  * This function gets called when the buffer of girara changes
  *
  * @param session The girara session

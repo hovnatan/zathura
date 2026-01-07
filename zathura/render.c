@@ -140,11 +140,9 @@ static void renderer_finalize(GObject* object) {
   ZathuraRenderer* renderer    = ZATHURA_RENDERER(object);
   ZathuraRendererPrivate* priv = zathura_renderer_get_instance_private(renderer);
 
+  /* zathura_renderer_stop now handles pool cleanup, but call it in case
+   * finalize is called without stop being called first */
   zathura_renderer_stop(renderer);
-  if (priv->pool != NULL) {
-    girara_debug("Waiting for thread pool to finish.");
-    g_thread_pool_free(priv->pool, TRUE, TRUE);
-  }
   g_mutex_clear(&(priv->mutex));
 
   g_free(priv->page_cache.cache);
@@ -368,6 +366,18 @@ void zathura_renderer_stop(ZathuraRenderer* renderer) {
   ZathuraRendererPrivate* priv = zathura_renderer_get_instance_private(renderer);
   girara_debug("Setting about-to-close flag for renderer");
   priv->about_to_close = true;
+
+  /* Wait for thread pool to finish all running jobs.
+   * This is critical to prevent crashes when closing documents while
+   * render jobs are still accessing page/document data. */
+  if (priv->pool != NULL) {
+    girara_debug("Waiting for render thread pool to finish...");
+    /* FALSE = process remaining queued tasks (they'll exit early due to about_to_close)
+     * TRUE = wait for all tasks to complete */
+    g_thread_pool_free(priv->pool, FALSE, TRUE);
+    priv->pool = NULL;
+    girara_debug("Render thread pool finished.");
+  }
 }
 
 /* ZathuraRenderRequest methods */
