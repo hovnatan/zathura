@@ -108,6 +108,9 @@ void zathura_plugin_manager_set_dir(zathura_plugin_manager_t* plugin_manager, co
   g_return_if_fail(plugin_manager != NULL);
 
   if (dir != NULL) {
+    /* Clear existing paths when custom dir is set - this ensures bundled apps
+     * don't load plugins from both the bundle and the system/compile-time paths */
+    girara_list_clear(plugin_manager->path);
     set_plugin_dir(plugin_manager, dir);
   }
 }
