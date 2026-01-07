@@ -9,6 +9,8 @@
 
 #include <glib/gi18n.h>
 #include <glib/gstdio.h>
+#include <gdk/gdk.h>
+#include <gdk/gdkkeysyms.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -256,6 +258,43 @@ static zathura_t* create_zathura_window(const char* filepath) {
   return zathura;
 }
 
+#ifdef GTKOSXAPPLICATION
+static GtkosxApplication* osx_app = NULL;
+
+/* Called on application startup to set up macOS menu */
+static void on_startup(GtkApplication* app, gpointer user_data) {
+  (void)app;
+  (void)user_data;
+
+  osx_app = g_object_new(GTKOSX_TYPE_APPLICATION, NULL);
+  gtkosx_application_set_use_quartz_accelerators(osx_app, FALSE);
+
+  /* Create macOS menu bar */
+  GtkWidget* menubar = gtk_menu_bar_new();
+
+  /* File menu */
+  GtkWidget* file_menu = gtk_menu_new();
+  GtkWidget* file_item = gtk_menu_item_new_with_label("File");
+  gtk_menu_item_set_submenu(GTK_MENU_ITEM(file_item), file_menu);
+  gtk_menu_shell_append(GTK_MENU_SHELL(menubar), file_item);
+
+  /* New Window item */
+  GtkWidget* new_window_item = gtk_menu_item_new_with_label("New Window");
+  gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), new_window_item);
+  g_signal_connect_swapped(new_window_item, "activate",
+                           G_CALLBACK(g_application_activate), app_data->app);
+
+  gtk_widget_show_all(menubar);
+  gtkosx_application_set_menu_bar(osx_app, GTK_MENU_SHELL(menubar));
+  gtkosx_application_ready(osx_app);
+
+  const gchar* id = gtkosx_application_get_bundle_id();
+  if (id != NULL) {
+    girara_debug("Bundle ID: %s", id);
+  }
+}
+#endif
+
 /* Called when the application is activated (no files) */
 static void on_activate(GtkApplication* app, gpointer user_data) {
   (void)app;
@@ -454,18 +493,9 @@ GIRARA_VISIBLE int main(int argc, char* argv[]) {
   app_data->app = gtk_application_new("org.pwmt.zathura", flags);
   g_signal_connect(app_data->app, "activate", G_CALLBACK(on_activate), NULL);
   g_signal_connect(app_data->app, "open", G_CALLBACK(on_open), NULL);
-
 #ifdef GTKOSXAPPLICATION
-  GtkosxApplication* zathuraApp = g_object_new(GTKOSX_TYPE_APPLICATION, NULL);
-  gtkosx_application_set_use_quartz_accelerators(zathuraApp, FALSE);
-  gtkosx_application_ready(zathuraApp);
-  {
-    const gchar* id = gtkosx_application_get_bundle_id();
-    if (id != NULL) {
-      girara_debug("Bundle ID: %s", id);
-    }
-  }
-#endif // GTKOSXAPPLICATION
+  g_signal_connect(app_data->app, "startup", G_CALLBACK(on_startup), NULL);
+#endif
 
   /* g_option_context_parse has some funny (documented) behavior:
    * * for "-- a b c" you get no -- in argv

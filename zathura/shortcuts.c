@@ -1437,7 +1437,16 @@ bool sc_quit(girara_session_t* session, girara_argument_t* UNUSED(argument), gir
   girara_argument_t arg = {.n = GIRARA_HIDE, .data = NULL};
   girara_isc_completion(session, &arg, NULL, 0);
 
-  cb_destroy(NULL, NULL);
+  /* Close the document if open */
+  zathura_t* zathura = session->global.data;
+  if (zathura != NULL && zathura_has_document(zathura) == true) {
+    document_close(zathura, false);
+  }
+
+  /* Destroy the window - GtkApplication will quit when all windows are closed */
+  if (session->gtk.window != NULL) {
+    gtk_widget_destroy(GTK_WIDGET(session->gtk.window));
+  }
 
   return false;
 }
